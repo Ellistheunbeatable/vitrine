@@ -1,0 +1,124 @@
+name: release
+
+# Builds the Windows package on GitHub's own runners (windows-latest), so it
+# does not matter what machine you are on and nothing has to be installed
+# locally. Attaches VitrineSetup.zip to a GitHub Release.
+#
+# The download button on the site reads the Releases API at runtime, so the
+# moment this finishes, the button starts pointing at the real file. No page
+# edit needed, no manual upload.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish, e.g. v0.1.0"
+        required: true
+        default: "v0.1.0"
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: Build Vitrine for Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The app source is also stored as one base64 file so it can be added
+      # to the repository through the web editor in a single paste, without
+      # uploading a dozen .py files. If src/ is already present, use it as-is.
+      - name: Unpack app source if it is only present as a bundle
+        shell: pwsh
+        run: |
+          if (Test-Path "src/vitrine/__main__.py") { Write-Host "src/ already present"; exit 0 }
+          if (-not (Test-Path "app-src.b64")) { throw "Neither src/ nor app-src.b64 exists." }
+          $b64 = (Get-Content app-src.b64 -Raw) -replace "\s",""
+          [IO.File]::WriteAllBytes("app-src.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive -Path app-src.zip -DestinationPath . -Force
+          Remove-Item app-src.zip
+          if (-not (Test-Path "src/vitrine/__main__.py")) { throw "Unpack did not produce src/." }
+          Write-Host "unpacked app source"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+      - name: Build Vitrine.exe
+        shell: pwsh
+        run: python packaging/build_windows.py
+
+      - name: Package VitrineSetup.zip
+        shell: pwsh
+        run: python packaging/make_release.py
+
+      - name: Write the checksum file
+        shell: pwsh
+        run: |
+          $zip = "dist/VitrineSetup.zip"
+          if (-not (Test-Path $zip)) { throw "Release zip was not produced." }
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          $size = (Get-Item $zip).Length
+          "SHA-256  $hash" | Out-File -Encoding ascii dist/SHA256.txt
+          "Size     $size bytes" | Out-File -Append -Encoding ascii dist/SHA256.txt
+          "File     VitrineSetup.zip" | Out-File -Append -Encoding ascii dist/SHA256.txt
+          Get-Content dist/SHA256.txt
+
+      - name: Keep the zip as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitrineSetup
+          path: dist/VitrineSetup.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: Vitrine ${{ inputs.version || github.ref_name }}
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/VitrineSetup.zip
+            dist/SHA256.txt
+          body: |
+            ## Vitrine ${{ inputs.version || github.ref_name }}
+
+            Portable Windows build. No installer, no admin rights.
+
+            1. Download `VitrineSetup.zip`
+            2. Right-click → Extract All
+            3. Run `Vitrine.exe` inside the extracted folder
+
+            Windows will show a SmartScreen warning because this build is not
+            code-signed. Check the SHA-256 in `SHA256.txt` against the file
+            before you run it.
+
+            Android can be mirrored and controlled. iPhone can be mirrored
+            only — that is an iOS limit, not a bug in Vitrine.
