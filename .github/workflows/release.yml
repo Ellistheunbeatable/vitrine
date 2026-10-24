@@ -17,7 +17,7 @@ on:
       version:
         description: "Version tag to publish, e.g. v0.1.0"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.1"
       prerelease:
         description: "Mark as pre-release"
         type: boolean
@@ -120,6 +120,10 @@ jobs:
             1. Download `VitrineSetup.zip`
             2. Right-click → Extract All
             3. Run `Vitrine.exe` inside the extracted folder
+
+            It opens as its own application window, not a browser tab. If
+            Vitrine is already running, running it again brings the existing
+            window back instead of failing.
 
             Windows will show a SmartScreen warning because this build is not
             code-signed. Check the SHA-256 in `SHA256.txt` against the file
