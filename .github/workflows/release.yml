@@ -44,7 +44,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          # No `cache: pip` here on purpose.
+          # setup-python's pip cache looks for a requirements.txt or
+          # pyproject.toml and fails the whole job if it finds neither -
+          # which is exactly what happened on run #1. This app imports
+          # nothing outside the standard library, so there is no dependency
+          # file to cache against and the cache buys nothing.
 
       # The app source is also stored as one base64 file so it can be added
       # to the repository through the web editor in a single paste, without
